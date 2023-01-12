@@ -1,0 +1,191 @@
+---
+title: "PCS Scrape"
+output: html_notebook
+---
+
+#Step 1: Get a list of races for each year
+
+This section takes the years you want to scrape and the circuit, and generates a dataframe with the name of the race, the year and the link for the race
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(magrittr)
+library(data.table)
+library(polite)
+library(xml2)
+library(cli)
+library(glue)
+
+host <- "https://www.procyclingstats.com/"
+session <- polite::bow(host, force = TRUE)
+
+#select the years to scrape
+year = c(2020:2022)
+
+#select the circuit: 
+## 1 = Men's World Tour
+## 2 = Men's World Championships
+## 3 = Men's Junior
+## 4 = Women's Elite
+## 5 = Women's Junior
+## 6 = Woemn's World Tour
+## 7 = Europe Tour
+## 8 = Africa Tour
+## 9 = Asia Tour
+## 10 = Oceania Tour
+## 11 = American Tour
+## 12 = UCI Pro Series
+## 13 = National Cup
+
+circuit = c(1)
+
+#Combine inputs into a grid for the function to iterate through
+races_per_year <- expand_grid(year = year, circuit = circuit)
+
+#Function calls session and inputs to politely iterate through and combine each year's listed races
+race_urls <- purrr::pmap(races_per_year, function(year, circuit, session){
+  # For some verbose status updates
+  cli::cli_process_start("Scrape {.val {year}},{.val {circuit}}")
+  # Create full url and scrape
+  full_url <- polite::nod(session, glue::glue("races.php?year={year}&circuit={circuit}&class=&filter=Filter"))
+  scrape <- polite::scrape(full_url)
+
+      response <- scrape %>% 
+        html_elements(".basic a:nth-child(2)") %>%
+        xml_attrs()
+
+  # Update status
+  cli::cli_process_done()
+  # return parsed data
+  response
+}, session = session)
+
+#Takes output and extracts the race name, year, whether the race was run and the race url. Allows to filter out races that were cancelled
+race_list_df <- map(race_urls, function(list_element) { 
+  list_element %>% 
+                tibble::enframe(name = NULL) %>%
+          ## separate out each component of the URL by / and give them a name
+          tidyr::separate(value, c(NA, "race_name", "year", "race_completed", NA), sep = "/") %>% 
+                filter(is.na(race_completed)) %>%
+                select(-race_completed) %>%
+          ## glue together the "team_name" and "team_num" into a complete URL
+          mutate(link = glue("https://www.procyclingstats.com/race/{race_name}/{year}"))
+
+})
+
+#Combine each year's list of races into a dataframe
+race_list_df <- rbindlist(race_list_df, fill = T)
+
+link_list <- as.vector(race_list_df$link)
+
+stage_count_fun <- function(link){
+                  #For some verbose status updates
+                  cli::cli_process_start("Scrape {.val {link}}")
+                  
+                  full_url <- nod(session, link)
+                  scrape <- scrape(full_url)
+                  response <- scrape %>% 
+                                    html_elements(".pageSelectNav:nth-child(2) select") %>%
+                                    html_nodes("option") %>% 
+                                    html_text()
+                  
+                  response <- tibble(stages = response) %>%
+                                    mutate(stage_no = suppressWarnings(parse_number(stages))) %>%
+                                    mutate(stage_no = case_when(stage_no > 0 ~ stage_no,
+                                                                stage_no == 0 ~ 1)) %>%
+                                    summarise(stage_count = max(stage_no, na.rm = T))%>%
+                                                      mutate(link = link) %>%
+                                    select(link, stage_count)
+
+                    # Update status
+                    cli::cli_process_done()
+                    response
+}
+
+test <- map_dfr(link_list, stage_count_fun)
+
+#### This doesnt work yet as the html_elements selector is only present on stage races, but the blue writing showing "one day race" does not seem to work
+
+
+full_url <- nod(session, link_list[2])
+scrape <- scrape(full_url)
+response <- scrape %>% 
+                  #if() need an if statement saying if response contains "stage" do the stage race scrape, if it contains "one day race" do the one day scrape
+                                    # response <- scrape %>%  this is the command to get those responses
+                                    # html_elements(".blue") %>%
+                                    # html_text()
+                  html_elements(".pageSelectNav:nth-child(2) select") %>%
+                  html_nodes("option") %>% 
+                  html_text() %>%
+                  tibble() %>%
+                  rename(stages = ".") %>%
+                  mutate(stage_no = parse_number(stages)) %>%
+                  mutate(stage_no = case_when(stage_no > 0 ~ stage_no,
+                                    stage_no == 0 ~ 1)) %>%
+                  summarise(stage_count = max(stage_no, na.rm = T))%>%
+                                    mutate(link = links[3]) %>%
+                  select(link, stage_count)
+                  
+```
+
+
+## Extracting Tour results including results for each stage
+
+This section takes the input of race name from the previous section, the year and optionally the stage, and generates a dataframe of race results. Team time trial results have been excluded to simplify the results data set and in recognition that individual performance is difficult to discern from a TTT. 
+
+```{r}
+
+race <- race_list_df$race_name
+year <- race_list_df$year
+
+#Get the number of stages or if it is a one day race
+
+response <- scrape %>% 
+        html_elements(".blue")
+
+stage <- c(1:length(stage)) #need a way to just get all stages
+
+#grid_to_scrape <- expand_grid(race = tour_list, year = year, stage = stage)
+
+race_results <- purrr::pmap(grid_to_scrape, function(race, year, stage, session){
+  # For some verbose status updates
+  cli::cli_process_start("Scrape {.val {race}}, {.val {year}},{.val {stage}}")
+  # Create full url and scrape
+  full_url <- polite::nod(session, glue::glue("race/{race}/{year}/stage-{stage}/result"))
+  scrape <- polite::scrape(full_url)
+
+      response <- scrape %>% 
+        html_node("table") %>% 
+        html_table() %>%
+                select(-any_of(c(""))) %>%
+                mutate(race_info = paste(tour_list,year,"stage-",stage)) %>%
+                mutate_at(vars(one_of('Rnk')), as.numeric) %>%
+                clean_names()
+      
+  # Update status
+  cli::cli_process_done()
+  # return parsed data
+  response
+}, session = session)
+
+#need to remove the team time trial stage since its not of interest
+#the column "pos" is only present in the TTT. 
+race_results <- discard(race_results, ~any(names(.x) %in% c("pos")))
+
+#pmap_dfr did not work because 2 stages were cancelled so came up as empty lists, and it did not want to bind_rows with empty lists, The solution is to keep them as lists (just using pmap) and use the data.table function rbindlist
+race_results <- rbindlist(race_results, fill = T)
+
+#names of rider includes their name and team name, this removes the team name
+race_results %<>%
+    rowwise()%>%
+    mutate(rider = str_remove_all(rider, team)%>%
+               trimws())
+
+race_results %<>% rename(avg_km_h = avg)
+```
+
+
+
+
+
