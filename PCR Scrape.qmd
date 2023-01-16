@@ -349,9 +349,11 @@ race_results_df %>%
                   filter(rnk ==1 ) %>%
                   group_by(rider, race_type) %>% 
                   summarise(wins = n()) %>%
-                  filter(wins >2) %>%
-                  ggplot(aes(x = reorder(rider, wins), y = wins)) +
-                                    geom_col() +
+                  group_by(rider) %>%
+                  mutate(total_wins = sum(wins)) %>%
+                  filter(total_wins >2) %>%
+                  ggplot(aes(x = reorder(rider, total_wins), y = wins, fill = race_type)) +
+                                    geom_bar(stat = "identity") +
                                     coord_flip() +
                                     scale_y_continuous(breaks = c(0,2,4,6,8,10,12,14,16,18,20,22,24)) +
                                     labs(x = "")
@@ -360,5 +362,73 @@ race_results_df %>%
 
 Since the start of the 2020 season Pog has won the most races/stages with 22 followed closely by Van Aert with 21 and Roglic at 18.
 
-Perhaps it would be useful to see if it was a stage race or one-day race win. 
 
+```{r}
+#Something i should have done before. Split the race info col into race name, year, stage number. 
+race_results_df %<>%
+                  separate(race_info, c('race', 'year', 'delete', 'stage'), sep = " ") %>%
+                  select(-delete)
+
+#Now I can classify races as grand tours, spring classics etc
+race_results_df %<>% 
+                  mutate(race_level = case_when(race %in% c("giro-d-italia", 
+                                                            "tour-de-france", 
+                                                            "vuelta-a-espana") ~ "Grand Tour",
+                                                race %in% c("milano-sanremo",
+                                                            "ronde-van-vlaanderen",
+                                                            "paris-roubaix",
+                                                            "liege-bastogne-liege",
+                                                            "il-lombardia") ~ "Momument",
+                                                TRUE ~ "Other"))
+
+one_day_race_wins <- race_results_df %>% 
+                  filter(race_type == "one-day race", rnk ==1 ) %>%
+                  group_by(rider, race_level) %>% 
+                  summarise(wins = n()) %>%
+                  group_by(rider) %>%
+                  mutate(total_wins = sum(wins)) %>%
+                  #filter(total_wins >2) %>%
+                  ggplot(aes(x = reorder(rider, total_wins), y = wins, fill = race_level)) +
+                                    geom_col() +
+                                    coord_flip() +
+                                    #facet_wrap(~race_level) +
+                                    scale_y_continuous(breaks = c(0:20), limits = c(0,17)) +
+                                    labs(x = "", title = "One-Day Races")
+
+stage_race_wins <- race_results_df %>% 
+                  filter(race_type == "stage race", rnk ==1 ) %>%
+                  group_by(rider, race_level) %>% 
+                  summarise(wins = n()) %>%
+                  group_by(rider) %>%
+                  mutate(total_wins = sum(wins)) %>%
+                  filter(total_wins >2) %>%
+                  ggplot(aes(x = reorder(rider, total_wins), y = wins, fill = race_level)) +
+                                    geom_col() +
+                                    coord_flip() +
+                                    #facet_wrap(~race_level) +
+                                    scale_y_continuous(breaks = c(0:20), limits = c(0,17)) +
+                                    labs(x = "", title = "One-Day Races")
+
+
+
+gridExtra::grid.arrange(stage_race_wins, one_day_race_wins)
+```
+
+What does it look like if we look at who had the most 2nd places? 
+
+```{r}
+race_results_df %>% 
+                  filter(rnk ==2 ) %>%
+                  group_by(rider, race_type) %>% 
+                  summarise(second = n()) %>%
+                  group_by(rider) %>%
+                  mutate(total_seconds = sum(second)) %>%
+                  filter(total_seconds >2) %>%
+                  ggplot(aes(x = reorder(rider, total_seconds), y = second, fill = race_type)) +
+                                    geom_bar(stat = "identity") +
+                                    coord_flip() +
+                                    scale_y_continuous(breaks = c(0,2,4,6,8,10,12,14,16,18,20,22,24)) +
+                                    labs(x = "")
+```
+
+Perhaps surprisingly, Roglic had the most 2nd places since 2020. Recency bias coming in to play with regard to Van Aert for me on that one. 
