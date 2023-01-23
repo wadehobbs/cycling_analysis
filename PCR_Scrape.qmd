@@ -31,7 +31,8 @@ Select the circuit:
 9.  Asia Tour
 10. Oceania Tour
 11. American Tour
-12. UCI Pro Series 13 = National Cup
+12. UCI Pro Series 
+13. National Cup
 
 ```{r, warning=FALSE, message=FALSE, error=FALSE}
 library(tidyverse)

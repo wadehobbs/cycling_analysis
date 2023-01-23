@@ -144,7 +144,8 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <li>Asia Tour</li>
 <li>Oceania Tour</li>
 <li>American Tour</li>
-<li>UCI Pro Series 13 = National Cup</li>
+<li>UCI Pro Series</li>
+<li>National Cup</li>
 </ol>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(tidyverse)</span>
@@ -197,7 +198,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a><span class="fu">toc</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>total: 5.335 sec elapsed</code></pre>
+<pre><code>total: 5.384 sec elapsed</code></pre>
 </div>
 </div>
 <p>We now have a url for every race within each year specified. The list is broken down by year, so this provides a list of 2 lists, one for each year. The url will be used to scrape the data for the race/stage. So it is just a matter of looping through each url and scraping the table, then storing in a list. Through this process we can also check if the race was cancelled and exclude those races.</p>
@@ -334,7 +335,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <span id="cb4-50"><a href="#cb4-50" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb4-51"><a href="#cb4-51" aria-hidden="true" tabindex="-1"></a><span class="fu">toc</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>1411.875 sec elapsed</code></pre>
+<pre><code>1878.117 sec elapsed</code></pre>
 </div>
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># pmap_dfr did not work because it could not combine rnk col which was sometimes character when there was a DNF and sometimes numeric if not DNF/DNS. </span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="co"># My solution is to keep them as lists (just using pmap) and use the data.table function rbindlist</span></span>
@@ -397,7 +398,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <span id="cb7-38"><a href="#cb7-38" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb7-39"><a href="#cb7-39" aria-hidden="true" tabindex="-1"></a><span class="fu">toc</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>181.454 sec elapsed</code></pre>
+<pre><code>238.315 sec elapsed</code></pre>
 </div>
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Convert list into dataframe</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>oneday_race_results_df <span class="ot">&lt;-</span> <span class="fu">rbindlist</span>(oneday_race_results_list, <span class="at">fill =</span> T)</span>
