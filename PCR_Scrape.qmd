@@ -3,7 +3,7 @@ title: "PCR Scrape"
 format: html
 editor: visual
 ---
-test
+
 The goal here is to scrape the procyclingstats site for results data. Results can be scraped for any race level and any year provided by the site. For this example I will scrape the Men's World Tour results from the 2021 and 2022 seasons. This doc assumes some understanding of rvest for webscraping in R. I relied on the selector gadget (https://selectorgadget.com/) to find the css code needed for the scrape.
 
 This uses the polite package to assist in the scrape. As per the website:
