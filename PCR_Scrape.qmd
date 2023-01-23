@@ -1,0 +1,460 @@
+---
+title: "PCR Scrape"
+format: html
+editor: visual
+---
+
+The goal here is to scrape the procyclingstats site for results data. Results can be scraped for any race level and any year provided by the site. For this example I will scrape the Men's World Tour results from the 2021 and 2022 seasons. This doc assumes some understanding of rvest for webscraping in R. I relied on the selector gadget (https://selectorgadget.com/) to find the css code needed for the scrape. 
+
+This uses the polite package to assist in the scrape. As per the website:
+
+"The goal of polite is to promote responsible web etiquette. The package's two main functions *bow* and *scrape* define and realize a web harvesting session. bow is used to introduce the client to the host and ask for permission to scrape (by inquiring against the host's robots.txt file), while scrape is the main function for retrieving data from the remote server.
+
+The three pillars of a polite session are seeking permission, taking slowly and never asking twice."
+
+This does mean the scrapes are *slow* by design. For a worked example see: https://github.com/dmi3kno/polite
+
+# Step 1: Get a list of races you want to scrape
+
+This section takes the years you want to scrape and the circuit, and generates a dataframe with the name of the race, the year and the link for the race.
+
+Select the circuit:
+
+1.  Men's World Tour
+2.  Men's World Championships
+3.  Men's Junior
+4.  Women's Elite
+5.  Women's Junior
+6.  Women's World Tour
+7.  Europe Tour
+8.  Africa Tour
+9.  Asia Tour
+10. Oceania Tour
+11. American Tour
+12. UCI Pro Series 13 = National Cup
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+library(tidyverse)
+library(rvest)
+library(magrittr)
+library(data.table)
+library(polite)
+library(xml2)
+library(glue)
+library(tictoc)
+library(janitor)
+library(lubridate)
+library(Hmisc)
+
+host <- "https://www.procyclingstats.com/"
+session <- polite::bow(host, force = TRUE)
+
+# select the years to scrape
+year <- c(2021:2022)
+
+circuit <- c(1)
+
+# Combine inputs into a grid for the function to iterate through
+races_per_year <- expand_grid(year = year, circuit = circuit)
+
+# Function takes the year and circuit, combines them into a site specific url to begin the scraping process. 
+# The scrape is based on the format of the websites url so if this changes for any reason this will stop working.
+
+race_url_fun <- function(year, circuit, session) {
+  # Create full url and scrape
+  full_url <- polite::nod(
+    session,
+    glue::glue("races.php?year={year}&circuit={circuit}&class=&filter=Filter")
+  )
+  scrape <- polite::scrape(full_url)
+
+  response <- scrape %>%
+    html_elements(".basic a:nth-child(2)") %>%
+    xml_attrs()
+}
+
+# The function is given to pmap along with the years and circuit info in races_per_year to iterate through. 
+# The tictoc package provides easy to use benchmark for speed. Given the deliberate slow down in the scrape from the polite package its useful to know how long things will take when expanding to bigger scrapes.
+
+tic("total")
+race_urls <- purrr::pmap(races_per_year,
+  race_url_fun,
+  session = session,
+  .progress = F
+)
+toc()
+```
+
+We now have a url for every race within each year specified. The list is broken down by year, so this provides a list of 2 lists, one for each year. The url will be used to scrape the data for the race/stage. So it is just a matter of looping through each url and scraping the table, then storing in a list. Through this process we can also check if the race was cancelled and exclude those races.
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+# Takes url and extracts the race name, year, whether the race was run and the race url. 
+# Allows to filter out races that were cancelled
+
+race_list_fun <- function(list_element) {
+  list_element %>%
+    tibble::enframe(name = NULL) %>% # converts list element to a dataframe
+    ## separate out each component of the URL by / and give them a name
+    tidyr::separate(value, c(NA, "race_name", "year", "race_completed", NA), sep = "/") %>%
+    filter(is.na(race_completed)) %>% # filters out cancelled races
+    select(-race_completed) %>%
+    ## glue together the "race" and "year" into a complete URL
+    mutate(link = glue("https://www.procyclingstats.com/race/{race_name}/{year}"))
+}
+
+# Run the function over the produced list of race urls
+race_list_df <- map(race_urls, race_list_fun, .progress = F)
+
+# Now we have a list of 2 dataframes instead of a list of lists. 
+# We can then use rbindlist from the data.table package to convert the 3 dataframes in the list to a dataframe.
+
+# Combine each year's list of races into a dataframe
+race_list_df <- rbindlist(race_list_df, fill = T)
+
+# Get the list of urls for each race
+link_list <- as.vector(race_list_df$link)
+
+
+# Function takes a link from the link_list and extracts the list of stages. 
+# The second half of the function then uses the parse_number function to get the stage number from a character string, in this case the stage number. 
+# Hence if it is a one-day race it returns nothing and shows "-Inf".
+
+stage_count_fun <- function(link) {
+  full_url <- nod(session, link)
+  scrape <- scrape(full_url)
+  response <- scrape %>%
+    html_elements(".pageSelectNav:nth-child(2) select") %>%
+    html_nodes("option") %>%
+    html_text()
+
+  response <- tibble(stages = response) %>%
+    mutate(stage_no = suppressWarnings(parse_number(stages))) %>%
+    summarise(stage_count = suppressWarnings(max(stage_no, na.rm = T))) %>%
+    mutate(link = link) %>% # retain link to use later when joining back to race_list_df
+    select(link, stage_count)
+}
+
+
+# The function is fed into map. It will take each race link and find out many stages or if it is a one day race. Converts "-Inf" to 1 if necessary.
+stage_count_df <- map_dfr(link_list, stage_count_fun, .progress = F) %>%
+  mutate(stage_count = case_when(
+    is.infinite(stage_count) ~ 1,
+    TRUE ~ stage_count
+  ))
+
+# Add the number of stages to the race_list dataframe for each race
+race_list_df %<>% left_join(stage_count_df, by = "link")
+
+# Finally, need to expand the dataframe to have a row for each stage. 
+# The following will do this as well as separate out into stage races only.
+stage_races_df <- race_list_df %>%
+  filter(stage_count > 1) %>%
+  uncount(stage_count) %>% # adds as many rows as the number in 'stage_count'
+  group_by(race_name, year) %>%
+  mutate(stage = seq(1:length(race_name))) %>% # adds stage number col
+  rename(race = race_name) %>%
+  select(-link) # no longer need link col
+
+# Create list of one-day races
+oneday_races_df <- race_list_df %>%
+  filter(stage_count == 1) %>%
+  rename(race = race_name) %>%
+  select(-c(link, stage_count)) # no longer need link or stage col
+```
+
+## Step 2: Extracting results
+
+This section takes the input of race name from the previous section, the year and optionally the stage, and generates a dataframe of race results. Team time trial results have been excluded to simplify the results data set and in recognition that individual performance is difficult to discern from a TTT. There is a separate function for stage races and one-day races. For some reason I had trouble with the Vuelta 2022 stage 1 team time trial. It is not returning a table so breaks the loop. I have just excluded it manually until I can work out what is going on.
+
+Once we have a list of urls for each one-day race and stage of each stage race we can run them through functions to pull out the results.
+
+#### Stage Races
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+# remove the troublesome 2022 vuelta TTT.
+stage_races_df %<>% ungroup() %>%
+  filter(!(race == "vuelta-a-espana" &
+    year == 2022 &
+    stage == 1))
+
+# This function takes race name, year and stage for stage races and pulls the results for the stage along with race day info.
+stage_race_results_fun <- function(race, year, stage, session) {
+  # Create full url and scrape
+  full_url <- polite::nod(session, glue::glue("race/{race}/{year}/stage-{stage}/result"))
+  scrape <- polite::scrape(full_url)
+  response <- scrape %>%
+    html_node("table") %>%
+    html_table() %>%
+    clean_names() %>%
+    mutate(
+      race_info = paste(race, year, "stage-", stage),
+      race_type = "stage race"
+    )
+  # This part of the function gets all the race info such as date, length, rating etc.
+  response2 <- scrape %>%
+    html_nodes(".infolist div") %>%
+    html_text()
+  # tricky part is taking the messy extract and cleaning it up, need to split the
+  # output into two columns. The ind and id col being created is to take every
+  # second row and put into a new col. Then making each variable a col using
+  # pivot_wider
+  response2 <- tibble(race_info = response2) %>%
+    mutate(ind = rep(c(1, 2), length.out = n())) %>%
+    group_by(ind) %>%
+    mutate(id = row_number()) %>%
+    pivot_wider(names_from = ind, values_from = race_info) %>%
+    select(-id) %>%
+    rename(
+      variable = `1`,
+      value = `2`
+    ) %>%
+    filter(value != "") %>%
+    pivot_wider(names_from = variable, values_from = value) %>%
+    clean_names()
+  race_data <- bind_cols(response, response2)
+}
+
+# Run the function over the list of stage races.
+tic()
+stage_race_results_list <- purrr::pmap(stage_races_df,
+  stage_race_results_fun,
+  session = session,
+  .progress = F
+)
+toc()
+
+# pmap_dfr did not work because it could not combine rnk col which was sometimes character when there was a DNF and sometimes numeric if not DNF/DNS. 
+# My solution is to keep them as lists (just using pmap) and use the data.table function rbindlist
+stage_race_results_df <- rbindlist(stage_race_results_list, fill = T)
+
+# Extract the numbers from the bonus seconds column and convert rank to numeric.
+stage_race_results_df %<>% mutate(
+  bonus_secs = parse_number(x),
+  rnk = as.numeric(rnk)
+) %>%
+  select(-x)
+
+# Rider col shows the athlete's name and team together, this code separates them out.
+stage_race_results_df %<>%
+  rowwise() %>%
+  mutate(rider = str_remove_all(rider, team) %>%
+    trimws())
+```
+
+#### One-Day races
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+
+# Same as above on one day races
+oneday_race_results_fun <- function(race, year, session) {
+  # Create full url and scrape
+  full_url <- polite::nod(session, glue::glue("race/{race}/{year}/result"))
+  scrape <- polite::scrape(full_url)
+  response <- scrape %>%
+    html_node("table") %>%
+    html_table() %>%
+    clean_names() %>%
+    mutate(
+      race_info = paste(race, year),
+      race_type = "one-day race"
+    )
+  # This part of the function gets all the race info such as date, length, rating etc.
+  response2 <- scrape %>%
+    html_nodes(".infolist div") %>%
+    html_text()
+  response2 <- tibble(race_info = response2) %>%
+    mutate(ind = rep(c(1, 2), length.out = n())) %>%
+    group_by(ind) %>%
+    mutate(id = row_number()) %>%
+    pivot_wider(names_from = ind, values_from = race_info) %>%
+    select(-id) %>%
+    rename(variable = `1`, value = `2`) %>%
+    filter(value != "") %>%
+    pivot_wider(names_from = variable, values_from = value) %>%
+    clean_names()
+
+  race_data <- bind_cols(response, response2)
+}
+
+
+tic()
+oneday_race_results_list <- purrr::pmap(oneday_races_df,
+  oneday_race_results_fun,
+  session = session,
+  .progress = F
+)
+toc()
+
+# Convert list into dataframe
+oneday_race_results_df <- rbindlist(oneday_race_results_list, fill = T)
+
+
+# Convert cols to numeric.
+oneday_race_results_df %<>%
+  mutate(rnk = as.numeric(rnk))
+
+
+# names of rider includes their name and team name, this removes the team name
+oneday_race_results_df %<>%
+  rowwise() %>%
+  mutate(rider = str_remove_all(rider, team) %>%
+    trimws())
+
+
+# Combine into one data set
+race_results_df <- bind_rows(oneday_race_results_df, stage_race_results_df)
+```
+
+## Step 3: Cleaning
+
+We now have the combined results of all races for the selected years and criteria. Now need to clean up what we have.
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+# Want to check if there are any columns that are empty and what the data looks like generally.
+# Hmisc::describe(race_results_df)
+
+# This shows the h2h col is empty so will delete that, will also change the name of ovg to ovg_hm_h. The select call will remove h2h and reorder the cols to the order i prefer.
+race_results_df %<>% rename(avg_km_h = avg) %>%
+  select(
+    race_info, race_type, date, start_time, rider, age, bib, team,
+    rnk, uci, pnt, gc, time, bonus_secs, timelag, avg_km_h,
+    avg_speed_winner:bonus_secs
+  )
+
+
+# Fix the date col using lubridate package then order by date
+race_results_df$date <- dmy(race_results_df$date)
+race_results_df %<>% arrange(date)
+
+
+# Time and timelag cols are a mess and need to clean up other cols as well.
+# Convert the timelog col to total seconds
+race_results_df$timelag <- period_to_seconds(ms(race_results_df$timelag))
+
+# This will take all the ,,00 values in time col and change to actual time of the rider
+# The fill function needed to clean up the time col only works with tibbles so convert to tibble first
+race_results_df <- as_tibble(race_results_df)
+
+# Convert the ",,00" type times to NA
+race_results_df %<>%
+  mutate(across(
+    c(time),
+    ~ replace(., str_detect(., ",,"), NA)
+  ))
+
+# Then fill down with so everyone has an actual time
+race_results_df %<>% fill(time)
+
+# For some reason the time col has duplicated values within the same cell. So 3:44 behind will be 3:443:44.
+# Need to fix
+# Also have stuff like "4:58:3510″. Weird. time is not of great concern so will just ignore until i have a need for it.
+```
+
+## Examine the data
+
+Now we have the results, need to have a look at it. Who had the most wins for the the period?
+
+```{r, warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height= 6}
+race_results_df %>%
+  filter(rnk == 1) %>%
+  group_by(rider, race_type) %>%
+  summarise(wins = n()) %>%
+  group_by(rider) %>%
+  mutate(total_wins = sum(wins)) %>%
+  filter(total_wins > 2) %>%
+  ggplot(aes(x = reorder(rider, total_wins), y = wins, fill = race_type)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_y_continuous(breaks = c(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24)) +
+  labs(x = "", fill = "Race Type")
+```
+
+Since the start of the 2021 season Pog has won the most races/stages with 18 followed closely by Van Aert with 16 and Roglic at 11. Does not include overall GC wins. Limited to those with 3 or more wins.
+
+What does it look like if we look at who had the most 2nd places?
+
+```{r, warning=FALSE, message=FALSE, error=FALSE, fig.width=8, fig.height= 6}
+race_results_df %>%
+  filter(rnk == 2) %>%
+  group_by(rider, race_type) %>%
+  summarise(second = n()) %>%
+  group_by(rider) %>%
+  mutate(total_seconds = sum(second)) %>%
+  filter(total_seconds > 2) %>%
+  ggplot(aes(x = reorder(rider, total_seconds), y = second, fill = race_type)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_y_continuous(breaks = c(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24)) +
+  labs(x = "")
+```
+
+Perhaps unsurprisingly, Van Aert had the most 2nd places with 13 followed closely by Roglic with 12. 
+
+Finally, if we highlight monuments and grand tours, who has the most 'big' wins. The following graph is ordered by the most total wins, but shows how many were from monuments or grand tours and how many were not.
+
+```{r, warning=FALSE, message=FALSE, error=FALSE, fig.width=10, fig.height= 8}
+# Something i should have done before. Split the race info col into race name, year, stage number.
+race_results_df %<>%
+  separate(race_info, c("race", "year", "delete", "stage"), sep = " ") %>%
+  select(-delete)
+
+# Now I can classify races as grand tours, spring classics etc
+race_results_df %<>%
+  mutate(race_level = case_when(
+    race %in% c(
+      "giro-d-italia",
+      "tour-de-france",
+      "vuelta-a-espana"
+    ) ~ "Grand Tour",
+    race %in% c(
+      "milano-sanremo",
+      "ronde-van-vlaanderen",
+      "paris-roubaix",
+      "liege-bastogne-liege",
+      "il-lombardia"
+    ) ~ "Momument",
+    TRUE ~ "Other"
+  ))
+
+one_day_race_wins <- race_results_df %>%
+  filter(race_type == "one-day race", rnk == 1) %>%
+  group_by(rider, race_level) %>%
+  summarise(wins = n()) %>%
+  group_by(rider) %>%
+  mutate(total_wins = sum(wins)) %>%
+  # filter(total_wins >2) %>%
+  ggplot(aes(x = reorder(rider, total_wins), y = wins, fill = race_level)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~race_level) +
+  scale_y_continuous(breaks = c(0:20)) +
+  labs(x = "", title = "One-Day Races", fill = "Race Level")
+
+stage_race_wins <- race_results_df %>%
+  filter(race_type == "stage race", rnk == 1) %>%
+  group_by(rider, race_level) %>%
+  summarise(wins = n()) %>%
+  group_by(rider) %>%
+  mutate(total_wins = sum(wins)) %>%
+  filter(total_wins > 2) %>%
+  ggplot(aes(x = reorder(rider, total_wins), y = wins, fill = race_level)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~race_level) +
+  scale_y_continuous(breaks = c(0:20)) +
+  labs(x = "", title = "Stage Races", fill = "Race Level")
+
+
+
+gridExtra::grid.arrange(stage_race_wins, one_day_race_wins)
+```
+
+Looking at One-day races, Van Aert and Pog won the same number (5 wins), but that does not tell the whole story - 3 of Pog's 5 wins were Monuments while none of Van Aert's wins were Monuments. For Stage races, looking at the sprinters, both Bennett and Cavendish had 6 wins, of those 5 of Cavendish's were at Grand Tours while Bennett only had 2 Grand Tour stage wins. 
+
+There is a lot more to do in regards to analysis, this document has focused on the data scrape. With that achieved, future posts will be more in-depth analysis of this data.
+
+In the code I referenced the Hmisc package function "describe" to give a print out of info from each column. Ive included the results below to show what exactly has been scraped. 
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+Hmisc::describe(race_results_df)
+```
