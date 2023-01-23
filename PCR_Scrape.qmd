@@ -4,7 +4,7 @@ format: html
 editor: visual
 ---
 
-The goal here is to scrape the procyclingstats site for results data. Results can be scraped for any race level and any year provided by the site. For this example I will scrape the Men's World Tour results from the 2021 and 2022 seasons. This doc assumes some understanding of rvest for webscraping in R. I relied on the selector gadget (https://selectorgadget.com/) to find the css code needed for the scrape. 
+The goal here is to scrape the procyclingstats site for results data. Results can be scraped for any race level and any year provided by the site. For this example I will scrape the Men's World Tour results from the 2021 and 2022 seasons. This doc assumes some understanding of rvest for webscraping in R. I relied on the selector gadget (https://selectorgadget.com/) to find the css code needed for the scrape.
 
 This uses the polite package to assist in the scrape. As per the website:
 
@@ -31,7 +31,7 @@ Select the circuit:
 9.  Asia Tour
 10. Oceania Tour
 11. American Tour
-12. UCI Pro Series 
+12. UCI Pro Series
 13. National Cup
 
 ```{r, warning=FALSE, message=FALSE, error=FALSE}
@@ -389,7 +389,7 @@ race_results_df %>%
   labs(x = "")
 ```
 
-Perhaps unsurprisingly, Van Aert had the most 2nd places with 13 followed closely by Roglic with 12. 
+Perhaps unsurprisingly, Van Aert had the most 2nd places with 13 followed closely by Roglic with 12.
 
 Finally, if we highlight monuments and grand tours, who has the most 'big' wins. The following graph is ordered by the most total wins, but shows how many were from monuments or grand tours and how many were not.
 
@@ -450,11 +450,11 @@ stage_race_wins <- race_results_df %>%
 gridExtra::grid.arrange(stage_race_wins, one_day_race_wins)
 ```
 
-Looking at One-day races, Van Aert and Pog won the same number (5 wins), but that does not tell the whole story - 3 of Pog's 5 wins were Monuments while none of Van Aert's wins were Monuments. For Stage races, looking at the sprinters, both Bennett and Cavendish had 6 wins, of those 5 of Cavendish's were at Grand Tours while Bennett only had 2 Grand Tour stage wins. 
+Looking at One-day races, Van Aert and Pog won the same number (5 wins), but that does not tell the whole story - 3 of Pog's 5 wins were Monuments while none of Van Aert's wins were Monuments. For Stage races, looking at the sprinters, both Bennett and Cavendish had 6 wins, of those 5 of Cavendish's were at Grand Tours while Bennett only had 2 Grand Tour stage wins.
 
 There is a lot more to do in regards to analysis, this document has focused on the data scrape. With that achieved, future posts will be more in-depth analysis of this data.
 
-In the code I referenced the Hmisc package function "describe" to give a print out of info from each column. Ive included the results below to show what exactly has been scraped. 
+In the code I referenced the Hmisc package function "describe" to give a print out of info from each column. Ive included the results below to show what exactly has been scraped.
 
 ```{r, warning=FALSE, message=FALSE, error=FALSE}
 Hmisc::describe(race_results_df)
